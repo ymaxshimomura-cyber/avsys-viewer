@@ -1,0 +1,603 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no">
+<title>AVSYS Viewer</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
+body{background:#0B1120;color:#CBD5E1;font-family:'Courier New',monospace;overflow:hidden;height:100dvh;display:flex;flex-direction:column}
+
+/* ── トップバー ── */
+#topbar{height:48px;background:#0D1627;border-bottom:1px solid #1E293B;display:flex;align-items:center;padding:0 12px;gap:10px;flex-shrink:0;z-index:100}
+#logo{font-size:13px;font-weight:700;letter-spacing:.08em;flex-shrink:0}
+#logo .av{color:#3B82F6}
+#logo .sys{color:#06B6D4}
+#proj-info{flex:1;min-width:0}
+#proj-name{font-size:11px;font-weight:700;color:#F1F5F9;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#proj-sub{font-size:9px;color:#475569;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+#load-btn{padding:4px 10px;font-size:10px;font-weight:700;font-family:inherit;border:1px solid #3B82F6;border-radius:6px;background:transparent;color:#3B82F6;cursor:pointer;flex-shrink:0;white-space:nowrap}
+#load-btn:active{background:#1E3A8A}
+
+/* ── キャンバス ── */
+#canvas-wrap{flex:1;position:relative;overflow:hidden;touch-action:none}
+#cv{width:100%;height:100%;display:block}
+
+/* ── ロード画面 ── */
+#load-screen{position:absolute;inset:0;background:#0B1120;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;z-index:200;padding:24px}
+#load-screen h2{font-size:14px;color:#CBD5E1;font-weight:700;letter-spacing:.06em}
+#url-input{width:100%;max-width:480px;background:#0D1627;border:1px solid #334155;border-radius:8px;color:#CBD5E1;font-family:'Courier New',monospace;font-size:11px;padding:10px 12px;outline:none}
+#url-input:focus{border-color:#3B82F6}
+#url-input::placeholder{color:#334155}
+#fetch-btn{padding:8px 24px;font-size:11px;font-weight:700;font-family:inherit;border:1px solid #3B82F6;border-radius:8px;background:#1E3A8A;color:#93C5FD;cursor:pointer;width:100%;max-width:480px}
+#fetch-btn:active{background:#1D4ED8}
+.load-hint{font-size:10px;color:#475569;text-align:center;max-width:480px;line-height:1.6}
+.load-hint a{color:#3B82F6;text-decoration:none}
+#load-error{font-size:10px;color:#EF4444;display:none;max-width:480px;text-align:center}
+#loading-spinner{display:none;color:#3B82F6;font-size:11px}
+
+/* ── 凡例 ── */
+#legend{position:absolute;bottom:12px;right:12px;background:rgba(13,22,39,.9);border:1px solid #1E293B;border-radius:8px;padding:8px 10px;display:flex;flex-direction:column;gap:4px}
+.leg-r{display:flex;align-items:center;gap:6px;font-size:9px;color:#64748B}
+.leg-l{width:20px;height:2px;border-radius:1px;flex-shrink:0}
+
+/* ── ノード詳細ポップアップ ── */
+#popup{position:absolute;background:#0D1627;border:1px solid #334155;border-radius:10px;padding:12px 14px;max-width:260px;min-width:180px;z-index:300;display:none;pointer-events:auto;box-shadow:0 4px 20px rgba(0,0,0,.6)}
+#popup-close{position:absolute;top:8px;right:10px;background:transparent;border:none;color:#475569;font-size:14px;cursor:pointer;line-height:1}
+#popup-name{font-size:12px;font-weight:700;color:#F1F5F9;margin-bottom:6px;padding-right:20px}
+#popup-note{font-size:10px;color:#94A3B8;margin-bottom:8px;display:none}
+#popup-ports{display:flex;flex-direction:column;gap:3px}
+.pp-row{display:flex;align-items:center;gap:6px;font-size:10px}
+.pp-dot{width:8px;height:8px;border-radius:50%;flex-shrink:0}
+.pp-name{color:#CBD5E1;flex:1}
+.pp-dir{font-size:8px;color:#475569;flex-shrink:0}
+#popup-own{font-size:9px;margin-top:6px;padding-top:6px;border-top:1px solid #1E293B;color:#64748B;display:none}
+
+/* ── ズームコントロール ── */
+#zoom-ctrl{position:absolute;bottom:12px;left:12px;display:flex;flex-direction:column;gap:4px}
+.z-btn{width:32px;height:32px;background:rgba(13,22,39,.9);border:1px solid #1E293B;border-radius:6px;color:#CBD5E1;font-size:16px;cursor:pointer;display:flex;align-items:center;justify-content:center;font-family:'Courier New',monospace}
+.z-btn:active{background:#1E293B}
+
+/* ── カウンター ── */
+#stats{position:absolute;top:8px;left:8px;font-size:9px;color:#334155;pointer-events:none}
+</style>
+</head>
+<body>
+
+<div id="topbar">
+  <div id="logo"><span class="av">AV</span><span class="sys">SYS</span></div>
+  <div id="proj-info">
+    <div id="proj-name">— ビューワー —</div>
+    <div id="proj-sub">データを読み込んでください</div>
+  </div>
+  <button id="load-btn" onclick="showLoadScreen()">📂 データ読込</button>
+</div>
+
+<div id="canvas-wrap">
+  <svg id="cv" xmlns="http://www.w3.org/2000/svg">
+    <defs>
+      <marker id="ah-H" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#3B82F6" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+      <marker id="ah-S" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#F59E0B" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+      <marker id="ah-X" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#10B981" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+      <marker id="ah-U" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#A78BFA" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+      <marker id="ah-L" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#06B6D4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+      <marker id="ah-O" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="5" markerHeight="5" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="#94A3B8" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></marker>
+    </defs>
+    <g id="gl"></g>
+    <g id="el"></g>
+    <g id="nl"></g>
+    <g id="ll"></g>
+  </svg>
+
+  <div id="stats"></div>
+
+  <div id="legend">
+    <div class="leg-r"><div class="leg-l" style="background:#3B82F6"></div>HDMI</div>
+    <div class="leg-r"><div class="leg-l" style="background:#F59E0B"></div>SDI</div>
+    <div class="leg-r"><div class="leg-l" style="background:#10B981"></div>XLR/TRS</div>
+    <div class="leg-r"><div class="leg-l" style="background:#A78BFA"></div>USB</div>
+    <div class="leg-r"><div class="leg-l" style="background:#06B6D4"></div>LAN</div>
+    <div class="leg-r"><div class="leg-l" style="background:#94A3B8"></div>OTHER</div>
+  </div>
+
+  <div id="zoom-ctrl">
+    <button class="z-btn" id="zbtn-in">+</button>
+    <button class="z-btn" id="zbtn-fit">⊡</button>
+    <button class="z-btn" id="zbtn-out">−</button>
+  </div>
+
+  <div id="popup">
+    <button id="popup-close" onclick="closePopup()">✕</button>
+    <div id="popup-name"></div>
+    <div id="popup-note"></div>
+    <div id="popup-ports"></div>
+    <div id="popup-own"></div>
+  </div>
+
+  <!-- ロード画面 -->
+  <div id="load-screen">
+    <h2>AV<span style="color:#06B6D4">SYS</span> VIEWER</h2>
+    <div class="load-hint">
+      GistのRAWリンクを貼り付けてください<br>
+      <span style="color:#334155">（例: https://gist.githubusercontent.com/...）</span>
+    </div>
+    <input id="url-input" type="url" placeholder="https://gist.githubusercontent.com/..." autocomplete="off" autocorrect="off" spellcheck="false">
+    <button id="fetch-btn" onclick="fetchData()">読み込む</button>
+    <div id="loading-spinner">読み込み中...</div>
+    <div id="load-error"></div>
+    <div class="load-hint" style="margin-top:8px;font-size:9px">
+      URLパラメータでも読み込めます<br>
+      <span style="color:#334155">?gist=GistのID</span>
+    </div>
+  </div>
+</div>
+
+<script>
+const SC={HDMI:'#3B82F6',SDI:'#F59E0B',XLR:'#10B981',TRS:'#10B981',USB:'#A78BFA',LAN:'#06B6D4',OTHER:'#94A3B8'};
+const MK={HDMI:'ah-H',SDI:'ah-S',XLR:'ah-X',TRS:'ah-X',USB:'ah-U',LAN:'ah-L',OTHER:'ah-O'};
+const NODE_SIZES={
+  S:{w:120,phr:22,pph:16,ppd:4,fs:9,pfs:7},
+  M:{w:168,phr:26,pph:20,ppd:6,fs:11,pfs:9},
+  L:{w:220,phr:30,pph:22,ppd:8,fs:11,pfs:9},
+};
+
+let nodes=[],edges=[],labels=[];
+let zoom=1,panX=0,panY=0;
+
+/* ── ノードサイズ計算 ── */
+function nSz(n){
+  const base=NODE_SIZES[n.size]||NODE_SIZES.M;
+  if(!n.label)return base;
+  const charW=base.fs*0.76;
+  const needed=Math.ceil(n.label.length*charW)+40;
+  const w=Math.min(300,Math.max(base.w,needed));
+  return{...base,w};
+}
+function nH(n){
+  const sz=nSz(n);
+  const L=n.ports.filter(p=>p.d==='L').length;
+  const R=n.ports.filter(p=>p.d==='R').length;
+  return sz.phr+Math.max(L,R,1)*sz.pph+sz.ppd;
+}
+function pXY(n,i){
+  const p=n.ports[i];
+  if(n.type==='passthrough') return{x:i===0?n.x:n.x+20,y:n.y+10};
+  const sz=nSz(n);
+  const rank=n.ports.filter((pp,j)=>pp.d===p.d&&j<=i).length-1;
+  return{x:p.d==='L'?n.x:n.x+sz.w,y:n.y+sz.phr+sz.pph/2+rank*sz.pph};
+}
+function w2s(wx,wy){return{x:wx*zoom+panX,y:wy*zoom+panY};}
+function s2w(sx,sy){return{x:(sx-panX)/zoom,y:(sy-panY)/zoom};}
+function esc(s){return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');}
+
+/* ── 描画 ── */
+function hexToRgbObj(hex){
+  return{r:parseInt(hex.slice(1,3),16),g:parseInt(hex.slice(3,5),16),b:parseInt(hex.slice(5,7),16)};
+}
+
+function renderAll(){
+  document.getElementById('el').innerHTML=edges.map(renderEdge).join('');
+  document.getElementById('nl').innerHTML=nodes.map(renderNode).join('');
+  document.getElementById('ll').innerHTML=labels.map(renderLabel).join('');
+  document.getElementById('gl').innerHTML=renderGrid();
+  bindTap();
+}
+
+function renderGrid(){
+  const cv=document.getElementById('cv');
+  const W=cv.clientWidth,H=cv.clientHeight,gs=20*zoom;
+  const ox=(panX%gs+gs)%gs,oy=(panY%gs+gs)%gs;
+  let s='';
+  for(let x=ox-gs;x<W+gs;x+=gs)s+=`<line x1="${x.toFixed(1)}" y1="0" x2="${x.toFixed(1)}" y2="${H}" stroke="#1E293B" stroke-width="0.5"/>`;
+  for(let y=oy-gs;y<H+gs;y+=gs)s+=`<line x1="0" y1="${y.toFixed(1)}" x2="${W}" y2="${y.toFixed(1)}" stroke="#1E293B" stroke-width="0.5"/>`;
+  return s;
+}
+
+function renderNode(n){
+  if(n.type==='passthrough'){
+    const r=8*zoom;
+    const{x:cx,y:cy}=w2s(n.x+10,n.y+10);
+    const sigCol=n.col||'#94A3B8';
+    return`<g class="vnode" data-id="${n.id}" style="cursor:pointer">
+      <circle cx="${cx}" cy="${cy}" r="${r}" fill="#0F172A" stroke="${sigCol}" stroke-width="1.5"/>
+      <circle cx="${cx}" cy="${cy}" r="${r*0.45}" fill="${sigCol}"/>
+      <circle cx="${cx}" cy="${cy}" r="${r+8*zoom}" fill="transparent"/>
+    </g>`;
+  }
+  const sz=nSz(n);
+  const h=nH(n);
+  const{x:sx,y:sy}=w2s(n.x,n.y);
+  const sw=sz.w*zoom,sh=h*zoom,hh=sz.phr*zoom;
+  const fs=Math.max(7,sz.fs*zoom),pfs=Math.max(6,sz.pfs*zoom);
+  const{r:nr,g:ng,b:nb}=hexToRgbObj(n.col||'#2563EB');
+  const bodyBg=`rgb(${Math.round(nr*0.12+15)},${Math.round(ng*0.12+17)},${Math.round(nb*0.12+26)})`;
+  const noteFs=Math.max(6,8*zoom);
+
+  let o=`<g class="vnode" data-id="${n.id}" style="cursor:pointer">`;
+  o+=`<rect x="${sx}" y="${sy}" width="${sw}" height="${sh}" rx="${7*zoom}" fill="${bodyBg}" stroke="${n.col}" stroke-width=".8"/>`;
+  o+=`<rect x="${sx}" y="${sy}" width="${sw}" height="${hh}" rx="${7*zoom}" fill="${n.col}"/>`;
+  o+=`<rect x="${sx}" y="${sy+hh-4*zoom}" width="${sw}" height="${4*zoom}" fill="${n.col}"/>`;
+  o+=`<text x="${sx+sw/2}" y="${sy+hh/2}" text-anchor="middle" dominant-baseline="central" font-size="${fs}" font-weight="700" fill="white" font-family="'Courier New',monospace">${esc(n.label)}</text>`;
+
+  /* 所有区分バッジ */
+  if(n.ownership&&n.ownership!=='own'){
+    const od={rental:{col:'#06B6D4',lbl:'🔄'},client:{col:'#F472B6',lbl:'👤'}}[n.ownership];
+    if(od){
+      const obh=12*zoom,obw=18*zoom,obx=sx+4*zoom,oby=sy+sh-obh-3*zoom;
+      o+=`<rect x="${obx}" y="${oby}" width="${obw}" height="${obh}" rx="${obh/2}" fill="rgba(0,0,0,.5)" stroke="${od.col}" stroke-width="${zoom*.6}"/>`;
+      o+=`<text x="${obx+obw/2}" y="${oby+obh/2}" text-anchor="middle" dominant-baseline="central" font-size="${Math.max(6,7*zoom)}" fill="${od.col}" font-family="'Courier New',monospace">${od.lbl}</text>`;
+    }
+  }
+
+  /* ポート */
+  n.ports.forEach((p,i)=>{
+    const pp=pXY(n,i);
+    const{x:px,y:py}=w2s(pp.x,pp.y);
+    const isL=p.d==='L'||p.d==='B';
+    const sc2=SC[p.s]||SC.OTHER;
+    const portTxt=p.n.slice(0,Math.max(3,Math.floor((sz.w/2-8*zoom)/(pfs*0.60))-1));
+    o+=`<text x="${isL?sx+5*zoom:sx+sw-5*zoom}" y="${py}" text-anchor="${isL?'start':'end'}" dominant-baseline="central" font-size="${pfs}" font-weight="700" fill="#CBD5E1" opacity="1" font-family="'Courier New',monospace">${esc(portTxt)}</text>`;
+    o+=`<circle cx="${px}" cy="${py}" r="${3*zoom}" fill="${sc2}" opacity=".75"/>`;
+  });
+
+  /* 備考 */
+  if(n.note){
+    const noteTxt=n.note.split('\n')[0];
+    const noteMaxC=Math.max(4,Math.floor((sz.w*zoom-8*zoom)/(noteFs*0.72)));
+    const noteTrunc=noteTxt.length>noteMaxC?noteTxt.slice(0,noteMaxC-1)+'…':noteTxt;
+    o+=`<text x="${sx+sw/2}" y="${sy+sh-5*zoom}" text-anchor="middle" dominant-baseline="auto" font-size="${noteFs}" font-weight="700" fill="#CBD5E1" opacity="1" font-family="'Courier New',monospace">${esc(noteTrunc)}</text>`;
+  }
+
+  o+=`<rect x="${sx}" y="${sy}" width="${sw}" height="${sh}" rx="${7*zoom}" fill="transparent"/>`;
+  o+=`</g>`;
+  return o;
+}
+
+function renderEdge(e){
+  const fn=nodes.find(n=>n.id===e.fn),tn=nodes.find(n=>n.id===e.tn);
+  if(!fn||!tn||e.fpi>=fn.ports.length||e.tpi>=tn.ports.length)return'';
+  const f=pXY(fn,e.fpi),t=pXY(tn,e.tpi);
+  const{x:fx,y:fy}=w2s(f.x,f.y);
+  const{x:tx,y:ty}=w2s(t.x,t.y);
+  const sig=fn.ports[e.fpi]?.s||'OTHER';
+  const sc2=SC[sig]||SC.OTHER;
+  const mk=`url(#${MK[sig]||'ah-O'})`;
+  const isPassthrough=fn.type==='passthrough'||tn.type==='passthrough';
+  const isBackward=!isPassthrough&&(tx<fx-10);
+  const route=e.route||'curve';
+  let path;
+
+  if(route==='straight'){
+    path=`M${fx},${fy} L${tx},${ty}`;
+  } else if(route==='ortho'){
+    const mx2=(fx+tx)/2;
+    if(isBackward){
+      const det=fy<=ty?Math.min(fy,ty)-40*zoom:Math.max(fy,ty)+40*zoom;
+      path=`M${fx},${fy} L${fx+20*zoom},${fy} L${fx+20*zoom},${det} L${tx-20*zoom},${det} L${tx-20*zoom},${ty} L${tx},${ty}`;
+    } else {
+      path=`M${fx},${fy} L${mx2},${fy} L${mx2},${ty} L${tx},${ty}`;
+    }
+  } else {
+    /* curve（デフォルト） */
+    const bx=Math.abs(tx-fx)*0.5;
+    if(isBackward){
+      const det=fy<=ty?Math.min(fy,ty)-40*zoom:Math.max(fy,ty)+40*zoom;
+      path=`M${fx},${fy} C${fx+60*zoom},${fy} ${tx-60*zoom},${ty} ${tx},${ty}`;
+    } else {
+      path=`M${fx},${fy} C${fx+bx},${fy} ${tx-bx},${ty} ${tx},${ty}`;
+    }
+  }
+
+  const mx=(fx+tx)/2,my=(fy+ty)/2-14*zoom;
+  const isRental=e.rental||e.ownership==='rental';
+  const lbl=isRental?(e.label?`🔄 ${e.label}`:'🔄'):(e.label||'');
+  return`<g class="vedge" data-id="${e.id}" style="cursor:pointer">
+    <path d="${path}" fill="none" stroke="${sc2}" stroke-width="1.5" marker-end="${mk}"/>
+    ${lbl?`<rect x="${mx-lbl.length*3.5*zoom-4*zoom}" y="${my-7*zoom}" width="${lbl.length*7*zoom+8*zoom}" height="${14*zoom}" rx="${3*zoom}" fill="#0B1120" stroke="${sc2}" stroke-width="0.5"/>
+    <text x="${mx}" y="${my}" text-anchor="middle" dominant-baseline="central" font-size="${Math.max(7,9*zoom)}" font-weight="700" fill="${isRental?'#06B6D4':sc2}" font-family="'Courier New',monospace">${esc(lbl)}</text>`:''}
+    <path d="${path}" fill="none" stroke="transparent" stroke-width="${12*zoom}"/>
+  </g>`;
+}
+
+function renderLabel(l){
+  if(!l)return'';
+  const{x:sx,y:sy}=w2s(l.x,l.y);
+  const fs=Math.max(8,(l.size||14)*zoom);
+  const col=l.col||'#CBD5E1';
+  const pad=6*zoom;
+  const tw=l.text.length*fs*0.62+pad*2;
+  return`<g>
+    <rect x="${sx}" y="${sy}" width="${tw}" height="${fs*1.6}" rx="${3*zoom}" fill="rgba(11,17,32,.7)" stroke="${col}" stroke-width="0.5" opacity=".8"/>
+    <text x="${sx+pad}" y="${sy+fs*0.85}" font-size="${fs}" font-weight="${l.bold?'700':'400'}" fill="${col}" font-family="'Courier New',monospace" opacity=".9">${esc(l.text)}</text>
+  </g>`;
+}
+
+/* ── タップでポップアップ ── */
+function bindTap(){
+  document.querySelectorAll('.vnode').forEach(g=>{
+    g.addEventListener('click',e=>{
+      e.stopPropagation();
+      const n=nodes.find(n=>n.id===g.dataset.id);
+      if(n) showPopup(n,e);
+    });
+  });
+  document.querySelectorAll('.vedge').forEach(g=>{
+    g.addEventListener('click',e=>{
+      e.stopPropagation();
+      const ed=edges.find(e=>e.id===g.dataset.id);
+      if(ed) showEdgePopup(ed,e);
+    });
+  });
+}
+
+function showPopup(n,e){
+  const popup=document.getElementById('popup');
+  document.getElementById('popup-name').textContent=n.label;
+  const noteEl=document.getElementById('popup-note');
+  if(n.note){noteEl.textContent=n.note.split('\n')[0];noteEl.style.display='block';}
+  else noteEl.style.display='none';
+
+  const portsEl=document.getElementById('popup-ports');
+  portsEl.innerHTML=n.ports.map(p=>{
+    const sc2=SC[p.s]||SC.OTHER;
+    const dir=p.d==='L'?'IN':p.d==='R'?'OUT':'B/W';
+    return`<div class="pp-row"><div class="pp-dot" style="background:${sc2}"></div><span class="pp-name">${p.n||'—'}</span><span class="pp-dir">${p.s} ${dir}</span></div>`;
+  }).join('');
+
+  const ownEl=document.getElementById('popup-own');
+  if(n.ownership&&n.ownership!=='own'){
+    const lbl=n.ownership==='rental'?'🔄 レンタル':'👤 クライアント';
+    ownEl.textContent=lbl;ownEl.style.display='block';
+  } else ownEl.style.display='none';
+
+  positionPopup(popup,e);
+}
+
+function showEdgePopup(ed,e){
+  const fn=nodes.find(n=>n.id===ed.fn),tn=nodes.find(n=>n.id===ed.tn);
+  const popup=document.getElementById('popup');
+  const sig=fn?.ports[ed.fpi]?.s||'OTHER';
+  document.getElementById('popup-name').textContent=`${fn?.label||'?'} → ${tn?.label||'?'}`;
+  const noteEl=document.getElementById('popup-note');
+  noteEl.style.display='none';
+  const portsEl=document.getElementById('popup-ports');
+  const sc2=SC[sig]||SC.OTHER;
+  portsEl.innerHTML=`
+    <div class="pp-row"><div class="pp-dot" style="background:${sc2}"></div><span class="pp-name">${sig}</span></div>
+    <div class="pp-row" style="margin-top:4px"><span style="font-size:9px;color:#475569">長さ：</span><span class="pp-name" style="color:#F59E0B">${ed.label||'未設定'}</span></div>
+    ${ed.note?`<div class="pp-row"><span style="font-size:9px;color:#475569">メモ：</span><span class="pp-name">${ed.note}</span></div>`:''}
+    ${ed.rental||ed.ownership==='rental'?`<div class="pp-row"><span style="color:#06B6D4;font-size:10px">🔄 レンタル</span></div>`:''}
+  `;
+  document.getElementById('popup-own').style.display='none';
+  positionPopup(popup,e);
+}
+
+function positionPopup(popup,e){
+  popup.style.display='block';
+  const cw=document.getElementById('canvas-wrap');
+  const rect=cw.getBoundingClientRect();
+  const px=e.clientX-rect.left;
+  const py=e.clientY-rect.top;
+  const pw=popup.offsetWidth||220;
+  const ph=popup.offsetHeight||160;
+  let left=px+12,top=py+12;
+  if(left+pw>rect.width-8)left=px-pw-12;
+  if(top+ph>rect.height-8)top=py-ph-12;
+  popup.style.left=Math.max(4,left)+'px';
+  popup.style.top=Math.max(4,top)+'px';
+}
+
+function closePopup(){
+  document.getElementById('popup').style.display='none';
+}
+
+document.getElementById('canvas-wrap').addEventListener('click',()=>closePopup());
+
+/* ── パン・ズーム（マウス） ── */
+let isDragging=false,lastX=0,lastY=0;
+const cv=document.getElementById('canvas-wrap');
+
+cv.addEventListener('mousedown',e=>{
+  if(e.button===0){isDragging=true;lastX=e.clientX;lastY=e.clientY;}
+});
+cv.addEventListener('mousemove',e=>{
+  if(!isDragging)return;
+  panX+=e.clientX-lastX;panY+=e.clientY-lastY;
+  lastX=e.clientX;lastY=e.clientY;
+  renderAll();
+});
+cv.addEventListener('mouseup',()=>isDragging=false);
+cv.addEventListener('mouseleave',()=>isDragging=false);
+cv.addEventListener('wheel',e=>{
+  e.preventDefault();
+  const r=cv.getBoundingClientRect();
+  const mx=e.clientX-r.left,my=e.clientY-r.top;
+  const dz=e.deltaY<0?1.1:.91;
+  zoom=Math.min(4,Math.max(.2,zoom*dz));
+  panX=mx-(mx-panX)*dz;panY=my-(my-panY)*dz;
+  renderAll();
+},{passive:false});
+
+/* ── タッチ操作 ── */
+let touches={},lastDist=0,touchPanStart={x:0,y:0},touchPanOrigin={x:0,y:0};
+
+cv.addEventListener('touchstart',e=>{
+  e.preventDefault();
+  closePopup();
+  if(e.touches.length===1){
+    touchPanStart={x:e.touches[0].clientX,y:e.touches[0].clientY};
+    touchPanOrigin={x:panX,y:panY};
+  } else if(e.touches.length===2){
+    lastDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+  }
+},{passive:false});
+
+cv.addEventListener('touchmove',e=>{
+  e.preventDefault();
+  if(e.touches.length===1){
+    panX=touchPanOrigin.x+(e.touches[0].clientX-touchPanStart.x);
+    panY=touchPanOrigin.y+(e.touches[0].clientY-touchPanStart.y);
+    renderAll();
+  } else if(e.touches.length===2){
+    const dist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY);
+    if(lastDist>0){
+      const r=cv.getBoundingClientRect();
+      const mx=(e.touches[0].clientX+e.touches[1].clientX)/2-r.left;
+      const my=(e.touches[0].clientY+e.touches[1].clientY)/2-r.top;
+      const dz=dist/lastDist;
+      zoom=Math.min(4,Math.max(.2,zoom*dz));
+      panX=mx-(mx-panX)*dz;panY=my-(my-panY)*dz;
+      renderAll();
+    }
+    lastDist=dist;
+  }
+},{passive:false});
+
+cv.addEventListener('touchend',e=>{
+  if(e.touches.length===0)lastDist=0;
+  /* シングルタップ判定（移動が小さい場合のみ） */
+  if(e.changedTouches.length===1){
+    const dx=Math.abs(e.changedTouches[0].clientX-touchPanStart.x);
+    const dy=Math.abs(e.changedTouches[0].clientY-touchPanStart.y);
+    if(dx<8&&dy<8){
+      /* タップ → クリックイベントに任せる */
+    }
+  }
+},{passive:false});
+
+/* ── ズームボタン ── */
+document.getElementById('zbtn-in').onclick=()=>{
+  const r=cv.getBoundingClientRect();
+  const mx=r.width/2,my=r.height/2;
+  const dz=1.25;zoom=Math.min(4,zoom*dz);
+  panX=mx-(mx-panX)*dz;panY=my-(my-panY)*dz;
+  renderAll();
+};
+document.getElementById('zbtn-out').onclick=()=>{
+  const r=cv.getBoundingClientRect();
+  const mx=r.width/2,my=r.height/2;
+  const dz=0.8;zoom=Math.max(.2,zoom*dz);
+  panX=mx-(mx-panX)*dz;panY=my-(my-panY)*dz;
+  renderAll();
+};
+document.getElementById('zbtn-fit').onclick=fitView;
+
+/* ── フィット ── */
+function fitView(){
+  if(!nodes.length)return;
+  const cvEl=document.getElementById('canvas-wrap');
+  const W=cvEl.clientWidth,H=cvEl.clientHeight;
+  const margin=24;
+  let x0=Infinity,y0=Infinity,x1=-Infinity,y1=-Infinity;
+  nodes.forEach(n=>{
+    const sz=nSz(n);
+    x0=Math.min(x0,n.x);y0=Math.min(y0,n.y);
+    x1=Math.max(x1,n.x+sz.w);y1=Math.max(y1,n.y+nH(n));
+  });
+  edges.forEach(e=>{
+    const fn=nodes.find(n=>n.id===e.fn),tn=nodes.find(n=>n.id===e.tn);
+    if(!fn||!tn)return;
+    const fp=pXY(fn,e.fpi),tp=pXY(tn,e.tpi);
+    x0=Math.min(x0,fp.x,tp.x);y0=Math.min(y0,fp.y,tp.y);
+    x1=Math.max(x1,fp.x,tp.x);y1=Math.max(y1,fp.y,tp.y);
+  });
+  const scX=(W-margin*2)/(x1-x0);
+  const scY=(H-margin*2)/(y1-y0);
+  zoom=Math.min(scX,scY,2);
+  panX=(W-(x1-x0)*zoom)/2-x0*zoom;
+  panY=(H-(y1-y0)*zoom)/2-y0*zoom;
+  renderAll();
+}
+
+/* ── データ読み込み ── */
+function showLoadScreen(){
+  document.getElementById('load-screen').style.display='flex';
+  document.getElementById('load-error').style.display='none';
+  document.getElementById('loading-spinner').style.display='none';
+}
+
+async function fetchData(){
+  const url=document.getElementById('url-input').value.trim();
+  if(!url){showError('URLを入力してください');return;}
+
+  /* GistのURLをRAW URLに変換 */
+  let rawUrl=url;
+  const gistMatch=url.match(/gist\.github\.com\/([^\/]+)\/([a-f0-9]+)/);
+  if(gistMatch){
+    rawUrl=`https://api.github.com/gists/${gistMatch[2]}`;
+    await fetchGistApi(rawUrl);
+    return;
+  }
+
+  document.getElementById('loading-spinner').style.display='block';
+  document.getElementById('load-error').style.display='none';
+  try{
+    const res=await fetch(rawUrl);
+    if(!res.ok)throw new Error(`HTTP ${res.status}`);
+    const data=await res.json();
+    loadData(data);
+  }catch(err){
+    showError('読み込めませんでした。RAWのURLか確認してください。');
+  }
+  document.getElementById('loading-spinner').style.display='none';
+}
+
+async function fetchGistApi(apiUrl){
+  document.getElementById('loading-spinner').style.display='block';
+  try{
+    const res=await fetch(apiUrl);
+    if(!res.ok)throw new Error(`HTTP ${res.status}`);
+    const gist=await res.json();
+    const files=Object.values(gist.files);
+    const jsonFile=files.find(f=>f.filename.endsWith('.json'))||files[0];
+    if(!jsonFile)throw new Error('JSONファイルが見つかりません');
+    const raw=await fetch(jsonFile.raw_url);
+    const data=await raw.json();
+    loadData(data);
+  }catch(err){
+    showError('Gistの読み込みに失敗しました：'+err.message);
+  }
+  document.getElementById('loading-spinner').style.display='none';
+}
+
+function loadData(data){
+  nodes=data.nodes||[];
+  edges=data.edges||[];
+  labels=data.labels||[];
+  const meta=data.meta||{};
+  document.getElementById('proj-name').textContent=meta.proj||'無題';
+  const sub=[];
+  if(meta.event)sub.push(meta.event);
+  if(meta.dateStart)sub.push(meta.dateStart+(meta.dateEnd&&meta.dateEnd!==meta.dateStart?' 〜 '+meta.dateEnd:''));
+  sub.push(`機材 ${nodes.length}台 / ケーブル ${edges.length}本`);
+  document.getElementById('proj-sub').textContent=sub.join(' | ');
+  document.getElementById('stats').textContent=`機材 ${nodes.length}台  ケーブル ${edges.length}本`;
+  document.getElementById('load-screen').style.display='none';
+  fitView();
+}
+
+function showError(msg){
+  const el=document.getElementById('load-error');
+  el.textContent=msg;el.style.display='block';
+  document.getElementById('loading-spinner').style.display='none';
+}
+
+/* ── URLパラメータで自動読み込み ── */
+window.addEventListener('load',()=>{
+  const params=new URLSearchParams(location.search);
+  const gistId=params.get('gist');
+  const rawUrl=params.get('url');
+  if(gistId){
+    document.getElementById('url-input').value=`https://gist.github.com/x/${gistId}`;
+    fetchData();
+  } else if(rawUrl){
+    document.getElementById('url-input').value=rawUrl;
+    fetchData();
+  }
+  renderAll();
+});
+
+window.addEventListener('resize',()=>renderAll());
+</script>
+</body>
+</html>
